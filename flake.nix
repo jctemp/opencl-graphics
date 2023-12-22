@@ -19,7 +19,7 @@
         src = ./.;
       };
       devShells.${system}.default = pkgs.mkShell {
-        nativeBuildInputs = with pkgs; [ rustc cargo ocl-icd ];
+        nativeBuildInputs = with pkgs; [ rustup cargo ocl-icd ];
         shellHook = ''
           export OCL_ICD_VENDORS=/run/opengl-driver/etc/OpenCL/vendors
         '';
