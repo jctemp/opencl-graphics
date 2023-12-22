@@ -1,3 +1,11 @@
+int next_power_of_two(int n) {
+    int p = 1;
+    while (p < n) {
+        p = p << 1;
+    }
+    return p;
+}
+
 kernel void jacobi_step(
     const global uint* dim,
     const global float* mat,
@@ -21,7 +29,7 @@ kernel void jacobi_step(
         m_times_x[tx] = mat[i] * x[tx];
     }
 
-    for (int stride = (get_local_size(0) + 1) / 2; stride > 0; stride /= 2) {
+    for (int stride = next_power_of_two(get_local_size(0)); stride > 0; stride >>= 1) {
         // sync threads in work-group
         barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -44,7 +52,8 @@ kernel void residual_step(
     global float* residual
 ) {
     int i = get_global_id(0);
-    for (int stride = (get_local_size(0) + 1) / 2; stride > 0; stride /= 2) {
+
+    for (int stride = next_power_of_two(get_local_size(0)); stride > 0; stride >>= 1) {
         barrier(CLK_LOCAL_MEM_FENCE);
         if (i < stride && i + stride < *dim) {
             residuals[i] += residuals[i + stride];
