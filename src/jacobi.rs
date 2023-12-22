@@ -1,6 +1,6 @@
 use opencl3::{
     kernel::ExecuteKernel,
-    memory::{CL_MAP_WRITE, CL_MAP_READ},
+    memory::{CL_MAP_READ, CL_MAP_WRITE},
     svm::SvmVec,
     types::{cl_float, cl_uint, CL_BLOCKING},
 };
@@ -15,7 +15,7 @@ pub enum Mode {
 pub struct Job {
     dim: usize,
     mat: Vec<f32>,
-    b: Vec<f32>,
+    rhs: Vec<f32>,
     x: Vec<f32>,
     max: usize,
     eps: f32,
@@ -26,7 +26,7 @@ impl Job {
     pub fn new(
         dim: usize,
         mat: Vec<f32>,
-        b: Vec<f32>,
+        rhs: Vec<f32>,
         x: Vec<f32>,
         max: usize,
         eps: f32,
@@ -35,7 +35,7 @@ impl Job {
         Self {
             dim,
             mat,
-            b,
+            rhs,
             x,
             max,
             eps,
@@ -90,36 +90,30 @@ impl JacobiIteration {
     fn enqueue_svm_unmap<T>(ocl_runtime: &OclRuntime, cl_vec: &mut SvmVec<T>) {
         if cl_vec.is_fine_grained() {
             unsafe {
-                ocl_runtime
-                    .queue
-                    .enqueue_svm_unmap(cl_vec, &[])
-                    .unwrap();
+                ocl_runtime.queue.enqueue_svm_unmap(cl_vec, &[]).unwrap();
             }
         }
     }
 
     /// Solve the given job on the GPU.
     fn solve_gpu(&self, job: Job) -> Vec<f32> {
-        // 1. Allocate memory        
+        // 1. Allocate memory
         let mut cl_dim = SvmVec::<cl_uint>::allocate(&self.ocl_runtime.context, 1).unwrap();
         let mut cl_mat =
             SvmVec::<cl_float>::allocate(&self.ocl_runtime.context, job.dim * job.dim).unwrap();
         let mut cl_b = SvmVec::<cl_float>::allocate(&self.ocl_runtime.context, job.dim).unwrap();
         let mut cl_x = SvmVec::<cl_float>::allocate(&self.ocl_runtime.context, job.dim).unwrap();
-        let mut cl_max = SvmVec::<cl_uint>::allocate(&self.ocl_runtime.context, 1).unwrap();
 
         // 2. Copy data to the GPU
         Self::enqueue_svm_map_write(&self.ocl_runtime, &mut cl_dim);
         Self::enqueue_svm_map_write(&self.ocl_runtime, &mut cl_mat);
         Self::enqueue_svm_map_write(&self.ocl_runtime, &mut cl_b);
         Self::enqueue_svm_map_write(&self.ocl_runtime, &mut cl_x);
-        Self::enqueue_svm_map_write(&self.ocl_runtime, &mut cl_max);
 
         cl_dim.clone_from_slice(&[job.dim as u32]);
         cl_mat.clone_from_slice(job.mat.as_slice());
-        cl_b.clone_from_slice(job.b.as_slice());
+        cl_b.clone_from_slice(job.rhs.as_slice());
         cl_x.clone_from_slice(job.x.as_slice());
-        cl_max.clone_from_slice(&[job.max as u32]);
 
         // 3. Allocate additional memory for the GPU
         let mut cl_y = SvmVec::<cl_float>::allocate(&self.ocl_runtime.context, job.dim).unwrap();
@@ -195,7 +189,6 @@ impl JacobiIteration {
         Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_mat);
         Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_b);
         Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_x);
-        Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_max);
         Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_y);
         Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_residuals);
         Self::enqueue_svm_unmap(&self.ocl_runtime, &mut cl_residual);
@@ -210,8 +203,8 @@ impl JacobiIteration {
         let mut residual = vec![0.0; 1];
 
         for _ in 0..(job.max / 2) {
-            Self::jacobi_step(job.dim, &job.mat, &job.b, &x, &mut y, &mut residuals);
-            Self::jacobi_step(job.dim, &job.mat, &job.b, &y, &mut x, &mut residuals);
+            Self::jacobi_step(job.dim, &job.mat, &job.rhs, &x, &mut y, &mut residuals);
+            Self::jacobi_step(job.dim, &job.mat, &job.rhs, &y, &mut x, &mut residuals);
             Self::residual_step(job.dim, &mut residuals, &mut residual);
 
             if residual[0] < job.eps {
