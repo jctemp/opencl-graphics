@@ -19,7 +19,6 @@ pub enum ErrorType {
     DeviceNotFound(String),
     ContextCreationFailed(String),
     CommandQueueCreationFailed(String),
-    ProgramPathInvalid(String),
     ProgramCreationFailed(String),
     KernelCreationFailed(String),
 }
@@ -41,7 +40,6 @@ impl std::fmt::Display for OclError {
             ErrorType::CommandQueueCreationFailed(msg) => {
                 format!("Failed to create OpenCL command queue. {}", msg)
             }
-            ErrorType::ProgramPathInvalid(msg) => format!("Invalid OpenCL kernel path. {}", msg),
             ErrorType::ProgramCreationFailed(msg) => {
                 format!("Failed to create OpenCL program. {}", msg)
             }
@@ -58,7 +56,7 @@ impl std::error::Error for OclError {}
 type Result<T> = std::result::Result<T, OclError>;
 
 impl OclRuntime {
-    pub fn create(file: &str) -> Result<Self> {
+    pub fn build(kernel_source: &str) -> Result<Self> {
         // 1. prepare context, device and queue
         let platform = get_platforms()
             .map_err(|e| OclError(ErrorType::QueryFailed(e.to_string())))?
@@ -67,6 +65,8 @@ impl OclRuntime {
                 "Count = 0",
             ))))?
             .to_owned();
+        log::info!("Platform: {:?}", platform.name());
+
         let device_id = platform
             .get_devices(CL_DEVICE_TYPE_GPU)
             .map_err(|e| OclError(ErrorType::QueryFailed(e.to_string())))?
@@ -76,6 +76,7 @@ impl OclRuntime {
             ))))?
             .to_owned();
         let device = Device::new(device_id);
+        log::info!("Device: {:?}", device.name());
 
         let context = Context::from_device(&device)
             .map_err(|e| OclError(ErrorType::ContextCreationFailed(e.to_string())))?;
@@ -83,8 +84,6 @@ impl OclRuntime {
             .map_err(|e| OclError(ErrorType::CommandQueueCreationFailed(e.to_string())))?;
 
         // 2. Create program
-        let kernel_source = std::fs::read_to_string(file)
-            .map_err(|e| OclError(ErrorType::ProgramPathInvalid(e.to_string())))?;
         let program = Program::create_and_build_from_source(&context, &kernel_source, CL_STD_2_0)
             .map_err(|e| OclError(ErrorType::ProgramCreationFailed(e.to_string())))?;
         let kernel_jacobi_step = Kernel::create(&program, "jacobi_step")

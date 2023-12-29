@@ -1,11 +1,26 @@
 mod jacobi;
 mod opencl;
+mod curve;
 
 use jacobi::*;
-use opencl::OclRuntime;
+use opencl::*;
+use curve::*;
 
 use clap::Parser;
 use std::path::PathBuf;
+
+use bevy::{
+    pbr::{MaterialPipeline, MaterialPipelineKey},
+    prelude::*,
+    reflect::TypePath,
+    render::{
+        mesh::{MeshVertexBufferLayout, PrimitiveTopology},
+        render_resource::{
+            AsBindGroup, PolygonMode, RenderPipelineDescriptor, ShaderRef,
+            SpecializedMeshPipelineError,
+        },
+    },
+};
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -30,7 +45,7 @@ struct Cli {
     cpu: bool,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
 
     let args = Cli::parse();
@@ -41,13 +56,11 @@ fn main() {
         std::fs::canonicalize(&PathBuf::from("./")).expect("Should never fail")
     };
 
-    let file = format!("{}/jacobi.cl", path.to_str().unwrap());
-    let ocl_runtime = OclRuntime::create(&file).unwrap();
-    let solver = JacobiIteration::new(ocl_runtime);
+    let kernel_source = std::fs::read_to_string(path)?;
+    let ocl_runtime = OclRuntime::build(&kernel_source)?;
+    let solver = JacobiSolver::new(ocl_runtime);
 
     // 3. Create data
-
-    // Cubic spline interpolation
 
     let x = vec![0.0, 2.0, 4.0, 6.0, 8.0];
     let y = vec![0.0, 1.0, 0.0, 1.0, 0.0];
@@ -110,7 +123,7 @@ fn main() {
     let mut a = vec![0.0; dim];
     for i in 1..dim {
         let h = x[i] - x[i - 1];
-        a[i] = y[i - 1] + (1.0 / 2.0) * b[i] * h - (1.0 / 6.0) * c[i - 1] * h * h;
+        a[i] = y[i - 1] + 0.5 * b[i] * h - (1.0 / 6.0) * c[i - 1] * h * h;
     }
 
     println!("a's: {:?}", a);
@@ -124,8 +137,79 @@ fn main() {
             + b[i] * (arg - 0.5 * (x[i - 1] + x[i]))
             + a[i];
     }
+
     println!("s: {:?}", s);
     let sum = s.iter().sum::<f32>();
 
     println!("s: {:?}", sum);
+
+    // Windowing
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins(MaterialPlugin::<LineMaterial>::default())
+        .add_systems(Startup, setup_camera)
+        .add_systems(Startup, setup_line)
+        .run();
+
+    Ok(())
+}
+
+fn setup_camera(mut commands: Commands) {
+    commands.spawn(Camera3dBundle {
+        transform: Transform::from_xyz(0.0, 0.0, -10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        ..default()
+    });
+}
+
+fn setup_line(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<LineMaterial>>,
+) {
+    // Spawn a line strip that goes from point to point
+    commands.spawn(MaterialMeshBundle {
+        mesh: meshes.add(Mesh::from(LineStrip {
+            points: vec![Vec3::ZERO, Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 0.0, 0.0)],
+        })),
+        material: materials.add(LineMaterial {
+            color: Color::rgb(1.0, 0.0, 0.0),
+        }),
+        ..default()
+    });
+}
+
+/// A list of points that will have a line drawn between each consecutive points
+#[derive(Debug, Clone, Component)]
+pub struct LineStrip {
+    pub points: Vec<Vec3>,
+}
+
+impl From<LineStrip> for Mesh {
+    fn from(line: LineStrip) -> Self {
+        Mesh::new(PrimitiveTopology::LineStrip)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, line.points)
+    }
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+struct LineMaterial {
+    #[uniform(0)]
+    pub color: Color,
+}
+
+impl Material for LineMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "line_material.wgsl".into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayout,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        // Set the polygon mode to line
+        descriptor.primitive.polygon_mode = PolygonMode::Line;
+        Ok(())
+    }
 }

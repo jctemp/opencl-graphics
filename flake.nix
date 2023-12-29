@@ -11,18 +11,50 @@
         inherit system;
       };
       naersk' = pkgs.callPackage naersk { };
+      buildInputs = with pkgs; [ 
+          # Build
+          cmake
+          extra-cmake-modules
+          pkg-config
+
+          # OpenCL / OpenGL
+          ocl-icd
+          libGL
+          
+          # x11 features
+          xorg.libX11
+          xorg.libXrandr
+          xorg.libXinerama
+          xorg.libXcursor
+          xorg.libXi
+
+          # Wayland features
+          wayland
+          wayland-protocols 
+          libxkbcommon
+
+          # Other
+          udev
+          alsa-lib
+          vulkan-loader
+      ];
     in
     {
       formatter.${system} = pkgs.nixpkgs-fmt;
-      packages.${system}.default = naersk'.buildPackage {
-        nativeBuildInputs = with pkgs; [ ocl-icd ];
+      packages.${system}.default = naersk'.buildPackage rec {
+        inherit buildInputs;
+        LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
         src = ./.;
       };
-      devShells.${system}.default = pkgs.mkShell {
-        nativeBuildInputs = with pkgs; [ rustup cargo ocl-icd ];
-        shellHook = ''
-          export OCL_ICD_VENDORS=/run/opengl-driver/etc/OpenCL/vendors
-        '';
+      devShells.${system}.default = pkgs.mkShell rec {
+        nativeBuildInputs = with pkgs; [ 
+          rustup 
+          cargo 
+          clinfo
+        ];
+        inherit buildInputs;
+        LD_LIBRARY_PATH = "${pkgs.lib.makeLibraryPath buildInputs}";
+        GLFW_LIB_DIR = "${pkgs.glfw}/lib";
       };
     };
 }

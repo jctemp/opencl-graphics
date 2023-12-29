@@ -44,11 +44,11 @@ impl Job {
     }
 }
 
-pub struct JacobiIteration {
+pub struct JacobiSolver {
     ocl_runtime: OclRuntime,
 }
 
-impl JacobiIteration {
+impl JacobiSolver {
     /// Create a new instance of JacobiIteration.
     pub fn new(ocl_runtime: OclRuntime) -> Self {
         Self { ocl_runtime }
