@@ -7,6 +7,7 @@ use opencl3::{
 
 use crate::opencl::OclRuntime;
 
+#[derive(Debug, Clone, Copy)]
 pub enum Mode {
     CPU,
     GPU,
@@ -44,6 +45,7 @@ impl Job {
     }
 }
 
+#[derive(Debug)]
 pub struct JacobiSolver {
     ocl_runtime: OclRuntime,
 }

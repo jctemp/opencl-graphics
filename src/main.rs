@@ -7,7 +7,7 @@ use opencl::*;
 use curve::*;
 
 use clap::Parser;
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::{Arc, Mutex}};
 
 use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey},
@@ -108,6 +108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     );
 
+    // COMPUTE
+
     let c = solver.solve(job);
 
     println!("c's: {:?}", c);
@@ -149,16 +151,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_plugins(MaterialPlugin::<LineMaterial>::default())
         .add_systems(Startup, setup_camera)
         .add_systems(Startup, setup_line)
+        .add_systems(Startup, setup_solver)
+        .add_systems(Update, update_line)
         .run();
 
     Ok(())
 }
 
+#[derive(Debug, Clone, Component)]
+struct Solver {
+    solver: Arc<Mutex<JacobiSolver>>,
+    eps: f32,
+    max: usize,
+    mode: jacobi::Mode,
+}
+
+fn setup_solver(mut commands: Commands) {
+    let args = Cli::parse();
+
+    let path = if let Some(path) = args.path {
+        std::fs::canonicalize(&path).expect("User did not provide sound path.")
+    } else {
+        std::fs::canonicalize(&PathBuf::from("./")).expect("Should never fail")
+    };
+
+    let kernel_source = std::fs::read_to_string(path).expect("Cannot read kernel source");
+    let ocl_runtime = OclRuntime::build(&kernel_source).expect("Cannot build OCL runtime");
+    let solver = JacobiSolver::new(ocl_runtime);
+
+    commands.spawn(Solver {
+        solver: Arc::new(Mutex::new(solver)),
+        eps: args.eps,
+        max: args.max,
+        mode: if args.cpu {
+            jacobi::Mode::CPU
+        } else {
+            jacobi::Mode::GPU
+        },
+    });
+}
+
 fn setup_camera(mut commands: Commands) {
     commands.spawn(Camera3dBundle {
-        transform: Transform::from_xyz(0.0, 0.0, -10.0).looking_at(Vec3::ZERO, Vec3::Y),
+        transform: Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..default()
     });
+
 }
 
 fn setup_line(
@@ -176,6 +214,67 @@ fn setup_line(
         }),
         ..default()
     });
+}
+
+fn update_line(
+    solver: Query<&Solver>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    let solver_data = solver.single();
+    let solver = solver_data.solver.lock()
+        .expect("Cannot lock solver");
+
+    let x = vec![-2.0, -1.0, 0.0, 1.0, 2.0];
+    let y = vec![2.0, 1.0, 0.0, 1.0, 2.0];
+
+    let dim = x.len();
+    let mut mat = vec![0.0; dim * dim];
+    let mut rhs = vec![0.0; dim];
+
+    for i in 1..(dim - 1) {
+        let mut row = vec![0.0; dim];
+
+        row[i] = 4.0;
+        row[i - 1] = 1.0;
+        row[i + 1] = 1.0;
+
+        for j in 0..dim {
+            mat[i * dim + j] = row[j];
+        }
+
+        let h = x[i + 1] - x[i];
+        rhs[i] = (6.0 / h) * (y[i + 1] - 2.0 * y[i] + y[i - 1]);
+    }
+
+    mat[0] = 1.0;
+    mat[dim * dim - 1] = 1.0;
+
+    rhs[0] = 0.0;
+    rhs[dim - 1] = 0.0;
+
+    log::debug!("mat: {:?}", mat);
+    log::debug!("rhs: {:?}", rhs);
+    log::debug!("dim: {:?}", dim);
+
+    let job = Job::new(
+        dim,
+        mat,
+        rhs,
+        x.clone(),
+        solver_data.max,
+        solver_data.eps,
+        solver_data.mode,
+    );
+
+    // COMPUTE
+    let (_, mesh) = meshes.iter_mut().next().unwrap();
+
+    let c = solver.solve(job);
+
+    let points = CurveInterpolator::generate(&x, &c);
+
+    // set mesh positions
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, points);
 }
 
 /// A list of points that will have a line drawn between each consecutive points

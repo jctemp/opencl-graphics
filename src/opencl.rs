@@ -5,6 +5,7 @@ use opencl3::kernel::Kernel;
 use opencl3::platform::get_platforms;
 use opencl3::program::{Program, CL_STD_2_0};
 
+#[derive(Debug)]
 pub struct OclRuntime {
     pub context: Context,
     pub queue: CommandQueue,
@@ -65,7 +66,6 @@ impl OclRuntime {
                 "Count = 0",
             ))))?
             .to_owned();
-        log::info!("Platform: {:?}", platform.name());
 
         let device_id = platform
             .get_devices(CL_DEVICE_TYPE_GPU)
@@ -76,7 +76,6 @@ impl OclRuntime {
             ))))?
             .to_owned();
         let device = Device::new(device_id);
-        log::info!("Device: {:?}", device.name());
 
         let context = Context::from_device(&device)
             .map_err(|e| OclError(ErrorType::ContextCreationFailed(e.to_string())))?;
@@ -90,6 +89,12 @@ impl OclRuntime {
             .map_err(|e| OclError(ErrorType::KernelCreationFailed(e.to_string())))?;
         let kernel_residual_step = Kernel::create(&program, "residual_step")
             .map_err(|e| OclError(ErrorType::KernelCreationFailed(e.to_string())))?;
+
+        println!("OpenCL Summary:");
+        println!("  Platform: {}", platform.name().unwrap());
+        println!("  Device: {}", device.name().unwrap());
+        println!("  Kernel names: {}", program.get_kernel_names().unwrap());
+        println!();
 
         Ok(Self {
             context,
