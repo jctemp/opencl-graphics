@@ -6,7 +6,7 @@ use ocl_executor::*;
 use ocl_runtime::*;
 
 use clap::Parser;
-use std::{path::PathBuf, sync::{Arc, Mutex}};
+use std::{path::PathBuf, sync::{Arc, Mutex}, f32::consts::PI};
 
 use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey},
@@ -52,7 +52,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_systems(Startup, setup_camera)
         .add_systems(Startup, setup_line)
         .add_systems(Startup, setup_solver)
-        .add_systems(Update, update_line)
+        .add_systems(FixedUpdate, update_line)
+        .insert_resource(Time::<Fixed>::from_seconds(1.0))
         .run();
 
     Ok(())
@@ -96,7 +97,6 @@ fn setup_camera(mut commands: Commands) {
         transform: Transform::from_xyz(0.0, 0.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y),
         ..default()
     });
-
 }
 
 fn setup_line(
@@ -104,11 +104,21 @@ fn setup_line(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<LineMaterial>>,
 ) {
+    let line = LineStrip {
+        points: vec![
+            Vec3::new(-2.0, 0.0, 0.0), 
+            Vec3::new(-1.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(2.0, 0.0, 0.0),
+        ],
+    };
+
+    commands.spawn(line.clone());
+
     // Spawn a line strip that goes from point to point
     commands.spawn(MaterialMeshBundle {
-        mesh: meshes.add(Mesh::from(LineStrip {
-            points: vec![Vec3::ZERO, Vec3::new(1.0, 1.0, 0.0), Vec3::new(1.0, 0.0, 0.0)],
-        })),
+        mesh: meshes.add(Mesh::from(line)),
         material: materials.add(LineMaterial {
             color: Color::rgb(1.0, 0.0, 0.0),
         }),
@@ -117,15 +127,21 @@ fn setup_line(
 }
 
 fn update_line(
+    time: Res<Time>,
     solver: Query<&Solver>,
+    mut line: Query<&mut LineStrip>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
     let executor_data = solver.single();
     let executor = executor_data.solver.lock()
         .expect("Cannot lock solver");
+    
+    let (_, mesh) = meshes.iter_mut().next().unwrap();
 
-    let x = vec![-2.0, -1.0, 0.0, 1.0, 2.0];
-    let y = vec![0.0, 1.0, 0.0, -1.0, 0.0];
+    let x = line.single_mut().points.iter().map(|p| p.x).collect::<Vec<_>>();
+    let y = line.single_mut().points.iter().map(|p| p.y).collect::<Vec<_>>();
+
+    // line.single_mut().points.iter_mut().for_each(|p| p.y = (p.y * 2.0 * PI + time.delta_seconds()).sin());
 
     let job = SplineJob {
         samples: 100,
@@ -137,8 +153,9 @@ fn update_line(
     };
 
     let points = executor.solve_spline(job);
-    let (_, mesh) = meshes.iter_mut().next().unwrap();
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, points);
+
+    
 }
 
 /// A list of points that will have a line drawn between each consecutive points

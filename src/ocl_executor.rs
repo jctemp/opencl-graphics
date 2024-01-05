@@ -245,7 +245,7 @@ pub struct SplineJob {
 impl OclExecutor {
     /// Solve the given job. Delegate to the appropriate method based on the mode.
     pub fn solve_spline(&self, job: SplineJob) -> Vec<Vec3> {
-        let x = job.x;
+        let x: Vec<f32> = job.x;
         let y = job.y;
         let dim = x.len();
         let mut mat = vec![0.0; dim * dim];
