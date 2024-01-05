@@ -11,6 +11,7 @@ pub struct OclRuntime {
     pub queue: CommandQueue,
     pub kernel_jacobi_step: Kernel,
     pub kernel_residual_step: Kernel,
+    pub kernel_coefficients_step: Kernel,
 }
 
 #[derive(Debug)]
@@ -89,6 +90,8 @@ impl OclRuntime {
             .map_err(|e| OclError(ErrorType::KernelCreationFailed(e.to_string())))?;
         let kernel_residual_step = Kernel::create(&program, "residual_step")
             .map_err(|e| OclError(ErrorType::KernelCreationFailed(e.to_string())))?;
+        let kernel_coefficients_step = Kernel::create(&program, "coefficients_step")
+            .map_err(|e| OclError(ErrorType::KernelCreationFailed(e.to_string())))?;
 
         println!("OpenCL Summary:");
         println!("  Platform: {}", platform.name().unwrap());
@@ -101,6 +104,7 @@ impl OclRuntime {
             queue,
             kernel_jacobi_step,
             kernel_residual_step,
+            kernel_coefficients_step,
         })
     }
 }

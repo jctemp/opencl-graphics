@@ -1,10 +1,9 @@
-mod jacobi;
-mod opencl;
-mod curve;
 
-use jacobi::*;
-use opencl::*;
-use curve::*;
+mod ocl_executor;
+mod ocl_runtime;
+
+use ocl_executor::*;
+use ocl_runtime::*;
 
 use clap::Parser;
 use std::{path::PathBuf, sync::{Arc, Mutex}};
@@ -46,105 +45,6 @@ struct Cli {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
-
-    let args = Cli::parse();
-
-    let path = if let Some(path) = args.path {
-        std::fs::canonicalize(&path).expect("User did not provide sound path.")
-    } else {
-        std::fs::canonicalize(&PathBuf::from("./")).expect("Should never fail")
-    };
-
-    let kernel_source = std::fs::read_to_string(path)?;
-    let ocl_runtime = OclRuntime::build(&kernel_source)?;
-    let solver = JacobiSolver::new(ocl_runtime);
-
-    // 3. Create data
-
-    let x = vec![0.0, 2.0, 4.0, 6.0, 8.0];
-    let y = vec![0.0, 1.0, 0.0, 1.0, 0.0];
-
-    let dim = x.len();
-    let mut mat = vec![0.0; dim * dim];
-    let mut rhs = vec![0.0; dim];
-
-    for i in 1..(dim - 1) {
-        let mut row = vec![0.0; dim];
-
-        row[i] = 4.0;
-        row[i - 1] = 1.0;
-        row[i + 1] = 1.0;
-
-        for j in 0..dim {
-            mat[i * dim + j] = row[j];
-        }
-
-        let h = x[i + 1] - x[i];
-        rhs[i] = (6.0 / h) * (y[i + 1] - 2.0 * y[i] + y[i - 1]);
-    }
-
-    mat[0] = 1.0;
-    mat[dim * dim - 1] = 1.0;
-
-    rhs[0] = 0.0;
-    rhs[dim - 1] = 0.0;
-
-    log::debug!("mat: {:?}", mat);
-    log::debug!("rhs: {:?}", rhs);
-    log::debug!("dim: {:?}", dim);
-
-    let job = Job::new(
-        dim,
-        mat,
-        rhs,
-        x.clone(),
-        args.max,
-        args.eps,
-        if args.cpu {
-            jacobi::Mode::CPU
-        } else {
-            jacobi::Mode::GPU
-        },
-    );
-
-    // COMPUTE
-
-    let c = solver.solve(job);
-
-    println!("c's: {:?}", c);
-
-    let mut b = vec![0.0; dim];
-    for i in 1..dim {
-        let h = x[i] - x[i - 1];
-        b[i] = (1.0 / h) * (y[i] - y[i - 1]) - (h / 6.0) * (c[i] - c[i - 1]);
-    }
-
-    println!("b's: {:?}", b);
-
-    let mut a = vec![0.0; dim];
-    for i in 1..dim {
-        let h = x[i] - x[i - 1];
-        a[i] = y[i - 1] + 0.5 * b[i] * h - (1.0 / 6.0) * c[i - 1] * h * h;
-    }
-
-    println!("a's: {:?}", a);
-
-    let mut s = vec![0.0; dim];
-    let arg = 2.0;
-    for i in 1..dim {
-        let h = x[i] - x[i - 1];
-        s[i] = (1.0 / (6.0 * h)) * c[i] * (arg - x[i - 1]).powi(3)
-            + (1.0 / (6.0 * h)) * c[i - 1] * (x[i] - arg)
-            + b[i] * (arg - 0.5 * (x[i - 1] + x[i]))
-            + a[i];
-    }
-
-    println!("s: {:?}", s);
-    let sum = s.iter().sum::<f32>();
-
-    println!("s: {:?}", sum);
-
     // Windowing
     App::new()
         .add_plugins(DefaultPlugins)
@@ -160,10 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[derive(Debug, Clone, Component)]
 struct Solver {
-    solver: Arc<Mutex<JacobiSolver>>,
+    solver: Arc<Mutex<OclExecutor>>,
     eps: f32,
     max: usize,
-    mode: jacobi::Mode,
+    mode: ocl_executor::Mode,
 }
 
 fn setup_solver(mut commands: Commands) {
@@ -177,16 +77,16 @@ fn setup_solver(mut commands: Commands) {
 
     let kernel_source = std::fs::read_to_string(path).expect("Cannot read kernel source");
     let ocl_runtime = OclRuntime::build(&kernel_source).expect("Cannot build OCL runtime");
-    let solver = JacobiSolver::new(ocl_runtime);
+    let solver = OclExecutor::new(ocl_runtime);
 
     commands.spawn(Solver {
         solver: Arc::new(Mutex::new(solver)),
         eps: args.eps,
         max: args.max,
         mode: if args.cpu {
-            jacobi::Mode::CPU
+            ocl_executor::Mode::CPU
         } else {
-            jacobi::Mode::GPU
+            ocl_executor::Mode::GPU
         },
     });
 }
@@ -220,60 +120,24 @@ fn update_line(
     solver: Query<&Solver>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
-    let solver_data = solver.single();
-    let solver = solver_data.solver.lock()
+    let executor_data = solver.single();
+    let executor = executor_data.solver.lock()
         .expect("Cannot lock solver");
 
     let x = vec![-2.0, -1.0, 0.0, 1.0, 2.0];
-    let y = vec![2.0, 1.0, 0.0, 1.0, 2.0];
+    let y = vec![0.0, 1.0, 0.0, -1.0, 0.0];
 
-    let dim = x.len();
-    let mut mat = vec![0.0; dim * dim];
-    let mut rhs = vec![0.0; dim];
+    let job = SplineJob {
+        samples: 100,
+        x,
+        y,
+        eps: executor_data.eps,
+        max: executor_data.max,
+        mode: executor_data.mode,
+    };
 
-    for i in 1..(dim - 1) {
-        let mut row = vec![0.0; dim];
-
-        row[i] = 4.0;
-        row[i - 1] = 1.0;
-        row[i + 1] = 1.0;
-
-        for j in 0..dim {
-            mat[i * dim + j] = row[j];
-        }
-
-        let h = x[i + 1] - x[i];
-        rhs[i] = (6.0 / h) * (y[i + 1] - 2.0 * y[i] + y[i - 1]);
-    }
-
-    mat[0] = 1.0;
-    mat[dim * dim - 1] = 1.0;
-
-    rhs[0] = 0.0;
-    rhs[dim - 1] = 0.0;
-
-    log::debug!("mat: {:?}", mat);
-    log::debug!("rhs: {:?}", rhs);
-    log::debug!("dim: {:?}", dim);
-
-    let job = Job::new(
-        dim,
-        mat,
-        rhs,
-        x.clone(),
-        solver_data.max,
-        solver_data.eps,
-        solver_data.mode,
-    );
-
-    // COMPUTE
+    let points = executor.solve_spline(job);
     let (_, mesh) = meshes.iter_mut().next().unwrap();
-
-    let c = solver.solve(job);
-
-    let points = CurveInterpolator::generate(&x, &c);
-
-    // set mesh positions
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, points);
 }
 

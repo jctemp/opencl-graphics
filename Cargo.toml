@@ -10,11 +10,7 @@ log = "0.4.20"
 env_logger = "0.10.1"
 clap = { version = "4.4.11", features = ["derive"] }
 
-opencl3 = { version = "0.9.4", features = [
-    "CL_VERSION_2_1",
-    "CL_VERSION_2_2",
-    "CL_VERSION_3_0",
-] }
+opencl3 = "0.9.4"
 bevy = "0.12"
 
 [profile.dev]

@@ -18,6 +18,7 @@
           pkg-config
 
           # OpenCL / OpenGL
+          opencl-headers
           ocl-icd
           libGL
           

@@ -64,3 +64,16 @@ kernel void residual_step(
         *residual = residuals[0];
     }
 }
+
+kernel void coefficients_step(
+    const global float* y, 
+    const global float* x, 
+    const global float* c,
+    global float* b,
+    global float* a
+) {
+    int i = get_global_id(0) + 1;
+    float h = x[i] - x[i - 1];
+    b[i] = (1.0 / h) * (y[i] - y[i - 1]) - (h / 6.0) * (c[i] - c[i - 1]);
+    a[i] = y[i - 1] + 0.5 * b[i] * h - (1.0 / 6.0) * c[i - 1] * h * h;
+}
