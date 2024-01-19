@@ -27,7 +27,7 @@ impl OclExecutor {
 
     /// Set up vector to copy data to the GPU.
     fn enqueue_svm_map_write<T>(ocl_runtime: &OclRuntime, cl_vec: &mut SvmVec<T>) {
-        if cl_vec.is_fine_grained() {
+        if !cl_vec.is_fine_grained() {
             unsafe {
                 ocl_runtime
                     .queue
@@ -51,7 +51,7 @@ impl OclExecutor {
 
     /// Release vector from the GPU.
     fn enqueue_svm_unmap<T>(ocl_runtime: &OclRuntime, cl_vec: &mut SvmVec<T>) {
-        if cl_vec.is_fine_grained() {
+        if !cl_vec.is_fine_grained() {
             unsafe {
                 ocl_runtime.queue.enqueue_svm_unmap(cl_vec, &[]).unwrap();
             }
